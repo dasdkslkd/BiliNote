@@ -21,8 +21,8 @@ def get_data_dir():
 def get_model_dir(subdir: str = "whisper") -> str:
     # 判断是否为打包状态（PyInstaller）
     if getattr(sys, 'frozen', False):
-        # exe 执行，放在 APPDATA 或 ~/.cache 下
-        base_dir = os.path.join(os.getenv("APPDATA") or str(Path.home()), "BiliNote", "models")
+        # exe 执行，放在 安装目录下
+        base_dir = os.path.join(os.path.dirname(sys.executable),"models")
     else:
         # 开发时，相对项目根目录
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../models"))
