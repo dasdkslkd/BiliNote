@@ -59,7 +59,7 @@ class WhisperTranscriber(Transcriber):
                 local_dir=model_path,
             )
             logger.info("模型下载完成")
-
+        logger.info(f"使用 whisper-{model_size}")
         self.model = WhisperModel(
             model_size_or_path=model_path,
             device=self.device,
