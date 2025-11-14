@@ -10,9 +10,9 @@ jobs:
   build:
     strategy:
       matrix:
-        platform: [macos-latest, windows-latest]
+        platform: [windows-latest]
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: [self-hosted, Windows, X64]
 
     steps:
       - name: Checkout Code
@@ -30,6 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 
           if [ "$RUNNER_OS" = "Windows" ]; then
             backend\\build.bat
