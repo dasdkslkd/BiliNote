@@ -1,12 +1,21 @@
-use tauri::{Manager, Emitter};
+use tauri::{Manager, Emitter, RunEvent};
 use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::process::{CommandEvent, CommandChild};
 use std::env;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::process::Child;  // 引入Child类型
+
+// ============ 新增：全局状态管理 ============
+struct AppState {
+    child_process: Mutex<Option<CommandChild>>,
+}
+// ==========================================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // 构建应用，但不立即运行
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -20,66 +29,59 @@ pub fn run() {
             let exe_path = env::current_exe().expect("无法获取当前可执行文件路径");
             let sidecar_dir = exe_path.parent().expect("无法获取可执行文件的父目录");
 
-            // 收集所有系统环境变量
+            // 收集环境变量（保持原有逻辑）
             let mut all_env_vars = HashMap::new();
             for (key, value) in env::vars() {
                 all_env_vars.insert(key, value);
             }
 
-            // 增强 PATH 环境变量，添加常见的二进制路径
             let current_path = all_env_vars.get("PATH").cloned().unwrap_or_default();
             let additional_paths = get_additional_binary_paths();
             let enhanced_path = enhance_path_variable(&current_path, &additional_paths);
             all_env_vars.insert("PATH".to_string(), enhanced_path);
 
-            // 打印一些关键环境变量用于调试
             println!("Enhanced PATH: {}", all_env_vars.get("PATH").unwrap_or(&"Not found".to_string()));
-            println!("Total environment variables: {}", all_env_vars.len());
-
-            // 检查 ffmpeg 是否在 PATH 中可用
             check_ffmpeg_availability();
 
-            // 启动 Python 后端侧车
+            // ============ 关键修改1：保留子进程句柄 ============
             let mut sidecar_command = app.shell().sidecar("BiliNoteBackend").unwrap();
-
-            // 设置所有环境变量到 sidecar
+            
+            // 设置所有环境变量
             for (key, value) in &all_env_vars {
                 sidecar_command = sidecar_command.env(key, value);
             }
 
-            let (mut rx, _child) = sidecar_command
+            let (mut rx, child) = sidecar_command
                 .current_dir(sidecar_dir)
                 .spawn()
                 .expect("Failed to spawn sidecar");
+            
+            // 保存子进程到状态管理器
+            app.manage(AppState {
+                child_process: Mutex::new(Some(child)),
+            });
+            // ==================================================
 
-            // 获取主窗口句柄用于发送事件
             let window = app.get_webview_window("main").unwrap();
 
             tauri::async_runtime::spawn(async move {
-                // 读取诸如 stdout 之类的事件
                 while let Some(event) = rx.recv().await {
                     match event {
                         CommandEvent::Stdout(line) => {
                             let output = String::from_utf8_lossy(&line);
                             println!("Backend stdout: {}", output);
-
-                            // 发送到前端
-                            window
-                                .emit("backend-message", Some(format!("'{}'", output)))
+                            window.emit("backend-message", Some(format!("'{}'", output)))
                                 .expect("failed to emit event");
                         }
                         CommandEvent::Stderr(line) => {
                             let error = String::from_utf8_lossy(&line);
                             eprintln!("Backend stderr: {}", error);
-
-                            window
-                                .emit("backend-error", Some(format!("'{}'", error)))
+                            window.emit("backend-error", Some(format!("'{}'", error)))
                                 .expect("failed to emit event");
                         }
                         CommandEvent::Terminated(payload) => {
                             println!("Backend terminated with code: {:?}", payload.code);
-                            window
-                                .emit("backend-terminated", Some(payload.code))
+                            window.emit("backend-terminated", Some(payload.code))
                                 .expect("failed to emit event");
                             break;
                         }
@@ -98,8 +100,40 @@ pub fn run() {
             run_command_with_env,
             test_ffmpeg_access
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // ============ 关键修改2：监听退出事件 ============
+    app.run(|app_handle, event| {
+        if let RunEvent::ExitRequested { .. } = event {
+            println!("Application exiting, terminating backend...");
+            
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                if let Ok(mut child_lock) = state.child_process.lock() {
+                    if let Some(mut child) = child_lock.take() {
+                        // 跨平台终止进程树
+                        #[cfg(windows)]
+                        {
+                            // Windows: 强制杀死进程树（包括所有子进程）
+                            let pid = child.pid();
+                            let _ = std::process::Command::new("taskkill")
+                                .args(&["/F", "/T", "/PID", &pid.to_string()])
+                                .output();
+                            println!("Terminated backend process tree (PID: {})", pid);
+                        }
+                        
+                        #[cfg(not(windows))]
+                        {
+                            // Unix/macOS: 先尝试优雅终止
+                            let _ = child.kill();
+                            println!("Terminated backend process");
+                        }
+                    }
+                }
+            }
+        }
+    });
+    // ==================================================
 }
 
 // 获取额外的二进制路径
