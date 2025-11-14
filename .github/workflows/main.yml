@@ -31,13 +31,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            backend\\build.bat
-          else
-            chmod +x backend/build.sh
-            ./backend/build.sh
-          fi
+          backend\\build.bat
 
       # 设置 Node 环境 + 安装前端依赖
       - name: Set up Node.js
