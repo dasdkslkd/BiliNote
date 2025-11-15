@@ -46,8 +46,12 @@ jobs:
           pnpm install 
 
       # 设置 Rust 环境
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Use pre-installed Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+        shell: bash
 
       # 打包 Tauri 应用
       - name: Build Tauri App
